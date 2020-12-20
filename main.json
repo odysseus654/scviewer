@@ -21,6 +21,7 @@
       "html/ext/LZMA-JS-2.3.0/lzma-d.js"
     ],
     "include":[
-      "html/js/main/*.ts"
+      "html/js/main/*.ts",
+      "html/js/ctm/*.ts"
     ]
   }
