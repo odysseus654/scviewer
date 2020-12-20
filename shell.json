@@ -1,0 +1,19 @@
+{
+    "compilerOptions": {
+      "strict": true,
+      "strictPropertyInitialization": false,
+      "removeComments": true,
+      "outFile":"html/lib/shell.js",
+      "allowJs":true,
+      "target":"es6",
+      "downlevelIteration": true,
+      "incremental": true,
+      "types": []
+    },
+    "files":[
+      "html/ext/event-emitter.ts"
+    ],
+    "include":[
+      "html/js/shell/*.ts"
+    ]
+  }

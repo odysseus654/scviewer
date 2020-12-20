@@ -1,0 +1,26 @@
+{
+    "compilerOptions": {
+      "strict": true,
+      "strictPropertyInitialization": false,
+      "removeComments": true,
+      "outFile":"html/lib/main.js",
+      "allowJs":true,
+      "module":"amd",
+      "target":"es6",
+      "downlevelIteration": true,
+      "importHelpers": true,
+      "incremental": true,
+      "moduleResolution": "node",
+      "types": []
+    },
+    "files":[
+      "html/ext/quasar-1.14.7/vue.js",
+      "html/ext/quasar-1.14.7/quasar.umd.js",
+      "html/ext/require.js",
+      "html/ext/helpers/tslib.js",
+      "html/ext/LZMA-JS-2.3.0/lzma-d.js"
+    ],
+    "include":[
+      "html/js/main/*.ts"
+    ]
+  }

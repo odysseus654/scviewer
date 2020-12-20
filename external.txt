@@ -1,0 +1,17 @@
+event-emitter.ts - EventEmitter polyfill by undecidedapollo <https://gist.github.com/mudge/5830382>
+    License unknown (general gist license?)
+
+LZMA-JS (2.3.0) - Javascript Implementation of LZMA <https://github.com/LZMA-JS/LZMA-JS>
+    MIT License <https://github.com/LZMA-JS/LZMA-JS/blob/master/LICENSE>
+
+material-design-icons-iconfont (v6.1.0) - Icon set <https://github.com/jossef/material-design-icons-iconfont>
+    Apache2 license <https://github.com/jossef/material-design-icons-iconfont/blob/master/LICENSE>
+
+Quasar (1.14.7) - UI Components <https://quasar.dev/>
+    MIT license <https://github.com/quasarframework/quasar/blob/dev/LICENSE>
+
+require.js / require-min.js (2.3.6) - RequireJS <https://requirejs.org/docs/download.html>
+    MIT license <https://github.com/requirejs/requirejs/blob/master/LICENSE>
+
+Vue.js (2.6.12) - DOM framework <https://vuejs.org/>
+    MIT license <https://github.com/vuejs/vue/blob/dev/LICENSE>
