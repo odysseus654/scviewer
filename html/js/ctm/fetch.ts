@@ -25,7 +25,15 @@ class NetworkRequest extends EventEmitter<'load'|'error'> {
     }
 
     private onLoad(ev: ProgressEvent<XMLHttpRequestEventTarget>) {
-        this.emit('load', this.xhr.response);
+        const xhr = this.xhr;
+        if(xhr.status / 100 == 2) {
+            this.emit('load', this.xhr.response);
+        } else {
+            this.emit('error', {
+                status: xhr.status,
+                statusText: xhr.statusText,
+            });
+        }
     }
 
     private onError(ev: ProgressEvent<XMLHttpRequestEventTarget>) {

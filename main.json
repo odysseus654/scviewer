@@ -14,11 +14,11 @@
       "types": []
     },
     "files":[
+      "html/ext/LZMA-JS-2.3.0/lzma.js",
       "html/ext/quasar-1.14.7/vue.js",
       "html/ext/quasar-1.14.7/quasar.umd.js",
       "html/ext/require.js",
-      "html/ext/helpers/tslib.js",
-      "html/ext/LZMA-JS-2.3.0/lzma-d.js"
+      "html/ext/helpers/tslib.js"
     ],
     "include":[
       "html/js/main/*.ts",

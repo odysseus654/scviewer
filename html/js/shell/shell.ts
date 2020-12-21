@@ -14,6 +14,7 @@ const enum Time {
 declare var requirejs:any;
 declare var define:any;
 declare var Vue:any;
+declare var LZMA:any;
 
 /* portal.ts - Initial bootstrap of the main interface */
 (function(global:typeof globalThis) {
@@ -122,6 +123,7 @@ declare var Vue:any;
 
 		// define dummy type definitions that are apparently being requested by the main script
 		define('js/types/event-emitter', [], () => { return {EventEmitter:EventEmitter}; });
+		define('js/types/lzma', [], () => { return {LZMA:LZMA}; });
 
 		requirejs.config({});
 	}

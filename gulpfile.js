@@ -130,15 +130,15 @@ function webpackTask(cb) {
 function awsPublish(cb) {
     const publisher = AwsPublish.create(
         {
-            region: "us-west-2",
+            region: "us-east-1",
             params: {
-                Bucket: "tw-distrib"
+                Bucket: "heath-distrib"
             }
         }
     );
 
     const cfSettings = {
-        distribution: 'xxx', // Cloudfront distribution ID
+        distribution: 'E2KHBKLSIU4UXQ', // Cloudfront distribution ID
         originPath: '/app',             // Configure OriginPath to be removed of file path to invalidation
         indexRootPath: true             // Invalidate index.html root paths (`foo/index.html` and `foo/`) (default: false)
       };
