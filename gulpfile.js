@@ -150,7 +150,8 @@ function awsPublish(cb) {
             webpackTask(cb),
             Gulp.src('html/*',{base:'./html'}),
             //Gulp.src('html/images/*',{base:'./html'}),
-            Gulp.src('html/ext/material-design-icons-iconfont-6.1.0/*',{base:'./html'})
+            Gulp.src('html/ext/material-design-icons-iconfont-6.1.0/*',{base:'./html'}),
+            Gulp.src('html/ext/LZMA-JS-2.3.0/lzma_worker*.js',{base:'./html'}),
         )
         .pipe(rename(function(path) {
             path.dirname = path.dirname.replace(/^html[\\\/]?/, '');

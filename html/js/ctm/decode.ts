@@ -16,7 +16,7 @@ interface CTMHeader {
     commentLen: number;
 }
 
-interface CTMData {
+export interface CTMData {
     indices : Uint32Array,
     vertices : Float32Array,
     normals? : Float32Array,
@@ -66,7 +66,7 @@ function readString(file:ArrayBuffer, off:number) : {val:string,len:number} {
 export function parseCTM(file : ArrayBuffer) : Promise<CTMData> {
     const hdr = extractCtmHeader(file);
     if(hdr.magic != 0x4d54434f) throw new Error('Not a valid OpenCTM file');
-    const offset = 32 + hdr.commentLen + 1;
+    const offset = 32 + hdr.commentLen;
 
     switch(hdr.compression) {
         case 0x00574152: // RAW
@@ -186,14 +186,14 @@ function readAttr_RAW(numVertex:number, data:DataView, off:number) : {blockSize:
     };
 }
 
-function unpack(data:DataView,off:number) : Promise<{size:number, data:ArrayBuffer}> {
+function unpack(decompressor:LZMA,data:DataView,off:number) : Promise<{size:number, data:ArrayBuffer}> {
     if(!off) off = 0;
-    const inputLen = data.getUint32(off);
+    const inputLen = data.getUint32(off, true);
     off += 4 + data.byteOffset;
-    const input = new Uint8Array(data.buffer.slice(off));
+    const input = new Uint8Array(data.buffer.slice(off, off+inputLen));
 
     return new Promise<{size:number, data:ArrayBuffer}>((resolve, reject) => {
-        LZMA.decompress(input, (result,error) => {
+        decompressor.decompress(input, (result,error) => {
             if(!result) {
                 reject(error);
             } else {
@@ -221,37 +221,38 @@ async function parseCTM_MG1(hdr:CTMHeader, offset:number, file:ArrayBuffer) : Pr
     const uvMap : {mapName:string,mapRef:string,data:Float32Array}[] = [];
     const attrList : {blockSize:number,attrName:string,data:Float32Array}[] = [];
     let unpacked : {size:number, data:ArrayBuffer};
+    const decompressor = LZMA('ext/LZMA-JS-2.3.0/lzma_worker.js');
 
     while(offset < len) {
         const view = new DataView(file, offset);
         const ident = view.getUint32(0, true);
         switch(ident) {
             case 0x58444e49: { // INDX
-                unpacked = await unpack(view, 4);
+                unpacked = await unpack(decompressor, view, 4);
                 indices = readIndex_MG1(hdr.numTriangle, new DataView(unpacked.data), 0);
                 offset += 4 + unpacked.size;
                 break;
             }
             case 0x54524556: { // VERT
-                unpacked = await unpack(view, 4);
+                unpacked = await unpack(decompressor, view, 4);
                 vertices = readVertex_RAW(hdr.numVertex, new DataView(unpacked.data), 0);
                 offset += 4 + unpacked.size;
                 break;
             }
             case 0x4d524f4e: { // NORM
-                unpacked = await unpack(view, 4);
+                unpacked = await unpack(decompressor, view, 4);
                 normals = readVertex_RAW(hdr.numVertex, new DataView(unpacked.data), 0);
                 offset += 4 + unpacked.size;
                 break;
             }
             case 0x43584554: { // TEXC
-                const map = await readMap_MG1(hdr.numVertex, view, 4);
+                const map = await readMap_MG1(decompressor, hdr.numVertex, view, 4);
                 uvMap.push(map)
                 offset += 4 + map.blockSize;
                 break;
             }
             case 0x52545441: { // ATTR
-                const attrs = await readAttr_MG1(hdr.numVertex, view, 4);
+                const attrs = await readAttr_MG1(decompressor, hdr.numVertex, view, 4);
                 attrList.push(attrs);
                 offset += 4 + attrs.blockSize;
                 break;
@@ -293,14 +294,14 @@ function readIndex_MG1(numTriangle:number, data:DataView, off:number) : Uint32Ar
     return result;
 }
 
-async function readMap_MG1(numVertex:number, data:DataView, off:number) : Promise<{blockSize:number,mapName:string,mapRef:string,data:Float32Array}> {
+async function readMap_MG1(decompressor:LZMA,numVertex:number, data:DataView, off:number) : Promise<{blockSize:number,mapName:string,mapRef:string,data:Float32Array}> {
     off += data.byteOffset;
     const mapName = readString(data.buffer, off);
     off += mapName.len;
     const mapRef = readString(data.buffer, off);
     off += mapRef.len - data.byteOffset;
 
-    const unpacked = await unpack(data, off);
+    const unpacked = await unpack(decompressor,data, off);
 
     const result = new Float32Array(numVertex*2);
     const unpackedView = new DataView(unpacked.data);
@@ -316,12 +317,12 @@ async function readMap_MG1(numVertex:number, data:DataView, off:number) : Promis
     };
 }
 
-async function readAttr_MG1(numVertex:number, data:DataView, off:number) : Promise<{blockSize:number,attrName:string,data:Float32Array}> {
+async function readAttr_MG1(decompressor:LZMA, numVertex:number, data:DataView, off:number) : Promise<{blockSize:number,attrName:string,data:Float32Array}> {
     off += data.byteOffset;
     const attrName = readString(data.buffer, off);
     off += attrName.len - data.byteOffset;
 
-    const unpacked = await unpack(data, off);
+    const unpacked = await unpack(decompressor, data, off);
 
     const result = new Float32Array(numVertex*4);
     const unpackedView = new DataView(unpacked.data);
@@ -352,17 +353,17 @@ interface MG2Header {
 }
 
 function extractMg2Header(data:DataView, off:number) : MG2Header {
-    const vertexPrec = data.getFloat32(off);
-    const normPrec = data.getFloat32(off+4);
-    const LBx = data.getFloat32(off+8);
-    const LBy = data.getFloat32(off+12);
-    const LBz = data.getFloat32(off+16);
-    const HBx = data.getFloat32(off+20);
-    const HBy = data.getFloat32(off+24);
-    const HBz = data.getFloat32(off+28);
-    const divX = data.getUint32(off+32);
-    const divY = data.getUint32(off+36);
-    const divZ = data.getUint32(off+40);
+    const vertexPrec = data.getFloat32(off, true);
+    const normPrec = data.getFloat32(off+4, true);
+    const LBx = data.getFloat32(off+8, true);
+    const LBy = data.getFloat32(off+12, true);
+    const LBz = data.getFloat32(off+16, true);
+    const HBx = data.getFloat32(off+20, true);
+    const HBy = data.getFloat32(off+24, true);
+    const HBz = data.getFloat32(off+28, true);
+    const divX = data.getUint32(off+32, true);
+    const divY = data.getUint32(off+36, true);
+    const divZ = data.getUint32(off+40, true);
 
     return {
         vertexPrec: vertexPrec,
@@ -385,10 +386,12 @@ async function parseCTM_MG2(hdr:CTMHeader, offset:number, file:ArrayBuffer) : Pr
     let gridIndices : null|Uint32Array = null;
     let indices : null|Uint32Array = null;
     let vertices : null|Float32Array = null;
+    let intNormals : null|Uint32Array = null;
     let normals : null|Float32Array = null;
     const uvMap : {mapName:string,mapRef:string,data:Float32Array}[] = [];
     const attrList : {blockSize:number,attrName:string,data:Float32Array}[] = [];
     let unpacked : {size:number, data:ArrayBuffer};
+    const decompressor = LZMA('ext/LZMA-JS-2.3.0/lzma_worker.js');
 
     while(offset < len) {
         const view = new DataView(file, offset);
@@ -400,37 +403,37 @@ async function parseCTM_MG2(hdr:CTMHeader, offset:number, file:ArrayBuffer) : Pr
                 break;
             }
             case 0x54524556: { // VERT
-                unpacked = await unpack(view, 4);
+                unpacked = await unpack(decompressor, view, 4);
                 vertices = readVertex_MG2(mg2Hdr!.vertexPrec, hdr.numVertex, new DataView(unpacked.data), 0);
                 offset += 4 + unpacked.size;
                 break;
             }
             case 0x58444e49: { // GIDX
-                unpacked = await unpack(view, 4);
+                unpacked = await unpack(decompressor, view, 4);
                 gridIndices = readGridIndex_MG2(hdr.numVertex, new DataView(unpacked.data), 0);
                 offset += 4 + unpacked.size;
                 break;
             }
             case 0x58444e49: { // INDX
-                unpacked = await unpack(view, 4);
+                unpacked = await unpack(decompressor, view, 4);
                 indices = readIndex_MG1(hdr.numTriangle, new DataView(unpacked.data), 0);
                 offset += 4 + unpacked.size;
                 break;
             }
             case 0x4d524f4e: { // NORM
-                unpacked = await unpack(view, 4);
-                normals = readNorm_MG2(hdr.numVertex, new DataView(unpacked.data), 0);
+                unpacked = await unpack(decompressor, view, 4);
+                intNormals = readIndex_MG1(hdr.numVertex, new DataView(unpacked.data), 0);
                 offset += 4 + unpacked.size;
                 break;
             }
             case 0x43584554: { // TEXC
-                const map = await readMap_MG2(hdr.numVertex, view, 4);
+                const map = await readMap_MG2(decompressor, hdr.numVertex, view, 4);
                 uvMap.push(map)
                 offset += 4 + map.blockSize;
                 break;
             }
             case 0x52545441: { // ATTR
-                const attrs = await readAttr_MG2(hdr.numVertex, view, 4);
+                const attrs = await readAttr_MG2(decompressor, hdr.numVertex, view, 4);
                 attrList.push(attrs);
                 offset += 4 + attrs.blockSize;
                 break;
@@ -440,7 +443,8 @@ async function parseCTM_MG2(hdr:CTMHeader, offset:number, file:ArrayBuffer) : Pr
         }
     }
 
-    postProcessVertex_MG2(mg2Hdr!, vertices!, gridIndices!)
+    postProcessVertex_MG2(mg2Hdr!, vertices!, gridIndices!);
+    if(intNormals) normals = postProcessNormals(mg2Hdr!.normPrec, indices!, vertices!, intNormals);
 
     return {
         indices : indices!,
@@ -512,16 +516,120 @@ function toSigned(val:number) : number {
     }
 }
 
-async function readMap_MG2(numVertex:number, data:DataView, off:number) : Promise<{blockSize:number,mapName:string,mapRef:string,data:Float32Array}> {
+function postProcessNormals(normPrec:number, indices:Uint32Array, vertices:Float32Array, intNormals:Uint32Array) : Float32Array {
+
+    const normals = new Float32Array(intNormals.length);
+    const smooth = new Float32Array(vertices.length);
+
+    const numIndices = indices.length / 3;
+    for (let idx = 0; idx < numIndices; idx++) {
+        // Get triangle corner indices
+        const indx = indices[idx*3];
+        const indy = indices[idx*3+1];
+        const indz = indices[idx*3+2];
+
+        // Calculate the normalized cross product of two triangle edges (i.e. the flat triangle normal)
+        const v1x = vertices[indy*3]     - vertices[indx*3];
+        const v2x = vertices[indz*3]     - vertices[indx*3];
+        const v1y = vertices[indy*3 + 1] - vertices[indx*3 + 1];
+        const v2y = vertices[indz*3 + 1] - vertices[indx*3 + 1];
+        const v1z = vertices[indy*3 + 2] - vertices[indx*3 + 2];
+        const v2z = vertices[indz*3 + 2] - vertices[indx*3 + 2];
+
+        let nx = v1y * v2z - v1z * v2y;
+        let ny = v1z * v2x - v1x * v2z;
+        let nz = v1x * v2y - v1y * v2x;
+
+        const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+        if (len > 1e-10){
+            nx /= len;
+            ny /= len;
+            nz /= len;
+        }
+
+        // Add the flat normal to all three triangle vertices
+        smooth[indx*3]     += nx;
+        smooth[indx*3 + 1] += ny;
+        smooth[indx*3 + 2] += nz;
+        smooth[indy*3]     += nx;
+        smooth[indy*3 + 1] += ny;
+        smooth[indy*3 + 2] += nz;
+        smooth[indz*3]     += nx;
+        smooth[indz*3 + 1] += ny;
+        smooth[indz*3 + 2] += nz;
+    }
+
+    // Normalize the normal sums, which gives the unit length smooth normals
+    const numVertices = vertices.length / 3;
+    for (let idx = 0; idx < numVertices; idx++){
+        const len = Math.sqrt(smooth[idx*3] * smooth[idx*3] + 
+            smooth[idx*3 + 1] * smooth[idx*3 + 1] +
+            smooth[idx*3 + 2] * smooth[idx*3 + 2]);
+
+        if(len > 1e-10){
+            smooth[idx*3]     /= len;
+            smooth[idx*3 + 1] /= len;
+            smooth[idx*3 + 2] /= len;
+        }
+    }
+
+    const PI_DIV_2 = Math.PI * 0.5;
+
+    for (let idx=0; idx < numVertices; idx++) {
+
+        // Get the normal magnitude from the first of the three normal elements
+        const magN = intNormals[idx*3] * normPrec;
+
+        // Get phi and theta (spherical coordinates, relative to the smooth normal).
+        const intPhi = intNormals[idx*3 + 1];
+
+        if (intPhi === 0) {
+            normals[idx*3]     = smooth[idx*3]     * magN;
+            normals[idx*3 + 1] = smooth[idx*3 + 1] * magN;
+            normals[idx*3 + 2] = smooth[idx*3 + 2] * magN;
+        } else {
+            let theta : number;
+            if (intPhi <= 4){
+                theta = (intNormals[idx*3 + 2] - 2) * PI_DIV_2;
+            }else{
+                theta = ((intNormals[idx*3 + 2] * 4 / intPhi) - 2) * PI_DIV_2;
+            }
+
+            const phi = intPhi * normPrec * PI_DIV_2;
+
+            // Convert the normal from the angular representation (phi, theta) back to cartesian coordinates
+            const sinPhi = magN * Math.sin(phi);
+            const nx = sinPhi * Math.cos(theta);
+            const ny = sinPhi * Math.sin(theta);
+            const nz = magN * Math.cos(phi);
+
+            let bz = smooth[idx*3 + 1];
+            let by = smooth[idx*3] - smooth[idx*3 + 2];
+
+            const len = Math.sqrt(2 * bz * bz + by * by);
+            if (len > 1e-20){
+                by /= len;
+                bz /= len;
+            }
+
+            normals[idx*3]     = smooth[idx*3]     * nz + (smooth[idx*3 + 1] * bz - smooth[idx*3 + 2] * by) * ny - bz * nx;
+            normals[idx*3 + 1] = smooth[idx*3 + 1] * nz - (smooth[idx*3 + 2]      + smooth[idx*3]   ) * bz  * ny + by * nx;
+            normals[idx*3 + 2] = smooth[idx*3 + 2] * nz + (smooth[idx*3]     * by + smooth[idx*3 + 1] * bz) * ny + bz * nx;
+        }
+    }
+    return normals;
+}
+
+async function readMap_MG2(decompressor:LZMA, numVertex:number, data:DataView, off:number) : Promise<{blockSize:number,mapName:string,mapRef:string,data:Float32Array}> {
     off += data.byteOffset;
     const mapName = readString(data.buffer, off);
     off += mapName.len;
     const mapRef = readString(data.buffer, off);
     off += mapRef.len;
-    const uvPrec = data.getFloat32(off);
+    const uvPrec = data.getFloat32(off, true);
     off += 4 - data.byteOffset;
 
-    const unpacked = await unpack(data, off);
+    const unpacked = await unpack(decompressor, data, off);
 
     const result = new Float32Array(numVertex*2);
     const unpackedView = new DataView(unpacked.data);
@@ -548,14 +656,14 @@ async function readMap_MG2(numVertex:number, data:DataView, off:number) : Promis
     };
 }
 
-async function readAttr_MG2(numVertex:number, data:DataView, off:number) : Promise<{blockSize:number,attrName:string,data:Float32Array}> {
+async function readAttr_MG2(decompressor:LZMA,numVertex:number, data:DataView, off:number) : Promise<{blockSize:number,attrName:string,data:Float32Array}> {
     off += data.byteOffset;
     const attrName = readString(data.buffer, off);
     off += attrName.len - data.byteOffset;
-    const attrPrec = data.getFloat32(off);
+    const attrPrec = data.getFloat32(off, true);
     off += 4 - data.byteOffset;
 
-    const unpacked = await unpack(data, off);
+    const unpacked = await unpack(decompressor, data, off);
 
     const result = new Float32Array(numVertex*4);
     const unpackedView = new DataView(unpacked.data);

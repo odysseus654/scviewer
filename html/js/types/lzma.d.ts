@@ -15,4 +15,5 @@ export interface LZMA {
 
     worker() : null|Worker;
 }
-export declare var LZMA : LZMA;
+
+export function LZMA(workerPath?:string) : LZMA;

@@ -4,3 +4,4 @@ nppBackup
 /node_modules
 /package-lock.json
 /temp
+/publish.cmd

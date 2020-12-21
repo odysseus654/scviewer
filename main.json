@@ -18,7 +18,7 @@
       "html/ext/quasar-1.14.7/vue.js",
       "html/ext/quasar-1.14.7/quasar.umd.js",
       "html/ext/require.js",
-      "html/ext/helpers/tslib.js"
+      "html/ext/tslib.js"
     ],
     "include":[
       "html/js/main/*.ts",
