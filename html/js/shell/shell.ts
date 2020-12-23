@@ -123,7 +123,8 @@ declare var LZMA:any;
 
 		// define dummy type definitions that are apparently being requested by the main script
 		define('js/types/event-emitter', [], () => { return {EventEmitter:EventEmitter}; });
-		define('js/types/lzma', [], () => { return {LZMA:LZMA}; });
+		//define('js/types/lzma', [], () => { return {LZMA:LZMA,LZMA2:LZMA}; });
+		define('js/types/lzma', [], () => { return LZMA; });
 
 		requirejs.config({});
 	}
