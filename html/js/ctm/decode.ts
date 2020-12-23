@@ -64,7 +64,7 @@ function readString(file:ArrayBuffer, off:number) : {val:string,len:number} {
     return { val: val, len:strlen+4 };
 }
 
-export function parseCTM(file : ArrayBuffer) : Promise<CTMData> {
+export function parseCTM(file : ArrayBuffer) : CTMData {
     const hdr = extractCtmHeader(file);
     if(hdr.magic != 0x4d54434f) throw new Error('Not a valid OpenCTM file');
     const offset = 32 + hdr.commentLen;
@@ -77,11 +77,11 @@ export function parseCTM(file : ArrayBuffer) : Promise<CTMData> {
         case 0x0032474d: // MG2
             return parseCTM_MG2(hdr, offset, file);
         default:
-            return Promise.reject(new Error('Unsupported compression method'));
+            throw new Error('Unsupported compression method');
     }
 }
 
-function parseCTM_Raw(hdr:CTMHeader, offset:number, file:ArrayBuffer) : Promise<CTMData> {
+function parseCTM_Raw(hdr:CTMHeader, offset:number, file:ArrayBuffer) : CTMData {
     const len = file.byteLength;
     let indices : null|Uint32Array = null;
     let vertices : null|Float32Array = null;
@@ -121,17 +121,17 @@ function parseCTM_Raw(hdr:CTMHeader, offset:number, file:ArrayBuffer) : Promise<
                 break;
             }
             default:
-                return Promise.reject(new Error('Unsupported chunk type or corrupted file'));
+                throw new Error('Unsupported chunk type or corrupted file');
         }
     }
 
-    return Promise.resolve<CTMData>({
+    return {
         indices : indices!,
         vertices : vertices!,
         normals : normals || undefined,
         uvMap : uvMap,
         attrList : attrList,
-    });
+    };
 }
 
 function readIndex_RAW(numTriangle:number, data:DataView, off:number) : Uint32Array {
@@ -186,35 +186,8 @@ function readAttr_RAW(numVertex:number, data:DataView, off:number) : {blockSize:
         data: result,
     };
 }
-/*
-function unpack(decompressor:LZMA2,data:DataView,off:number) : Promise<{size:number, data:ArrayBuffer}> {
-    if(!off) off = 0;
-    const inputLen = data.getUint32(off, true);
-    off += 4 + data.byteOffset;
-    const input = new Uint8Array(data.buffer.slice(off, off+inputLen));
 
-    return new Promise<{size:number, data:ArrayBuffer}>((resolve, reject) => {
-        decompressor.decompress(input, (result,error) => {
-            if(!result) {
-                reject(error);
-            } else {
-                // reverse byte interleaving (assuming all elements are 4 bytes long)
-                const outputLen = result.length / 4;
-                const output = new ArrayBuffer(outputLen*4);
-                const outputArr = new Uint8Array(output);
-                for(let idx=0; idx < outputLen; idx++) {
-                    outputArr[idx] = <number>result[idx*4];
-                    outputArr[idx + outputLen] = <number>result[idx*4+1];
-                    outputArr[idx + 2*outputLen] = <number>result[idx*4+2];
-                    outputArr[idx + 3*outputLen] = <number>result[idx*4+2];
-                }
-                resolve({size:inputLen,data:output});
-            }
-        });
-    });
-}
-*/
-function unpack(data:DataView,off:number,outSize:number) : Promise<{size:number, data:ArrayBuffer}> {
+function unpack(data:DataView,off:number,outSize:number) : {size:number, data:ArrayBuffer} {
     const inputLen = data.getUint32(off, true);
     off += 4 + data.byteOffset;
     const input = new Uint8Array(data.buffer.slice(off, off+inputLen));
@@ -238,16 +211,12 @@ function unpack(data:DataView,off:number,outSize:number) : Promise<{size:number,
         }
     }
 
-    try {
-        decompress(inputStream, inputStream, outputStream, outSize*4);
-    } catch(e) {
-        return Promise.reject(e);
-    }
+    decompress(inputStream, inputStream, outputStream, outSize*4);
 
-    return Promise.resolve<{size:number, data:ArrayBuffer}>({size:inputLen+4+5,data:outputBuffer});
+    return {size:inputLen+4+5,data:outputBuffer};
 }
 
-async function parseCTM_MG1(hdr:CTMHeader, offset:number, file:ArrayBuffer) : Promise<CTMData> {
+function parseCTM_MG1(hdr:CTMHeader, offset:number, file:ArrayBuffer) : CTMData {
     const len = file.byteLength;
     let indices : null|Uint32Array = null;
     let vertices : null|Float32Array = null;
@@ -263,33 +232,33 @@ async function parseCTM_MG1(hdr:CTMHeader, offset:number, file:ArrayBuffer) : Pr
         switch(ident) {
             case 0x58444e49: { // INDX
                 unpackedSize = 3 * hdr.numTriangle;
-                unpacked = await unpack(view, 4, unpackedSize);
+                unpacked = unpack(view, 4, unpackedSize);
                 indices = readIndex_MG1(hdr.numTriangle, new DataView(unpacked.data));
                 offset += 4 + unpacked.size;
                 break;
             }
             case 0x54524556: { // VERT
                 unpackedSize = 3 * hdr.numVertex;
-                unpacked = await unpack(view, 4, unpackedSize);
+                unpacked = unpack(view, 4, unpackedSize);
                 vertices = readVertex_RAW(hdr.numVertex, new DataView(unpacked.data), 0);
                 offset += 4 + unpacked.size;
                 break;
             }
             case 0x4d524f4e: { // NORM
                 unpackedSize = 3 * hdr.numVertex;
-                unpacked = await unpack(view, 4, unpackedSize);
+                unpacked = unpack(view, 4, unpackedSize);
                 normals = readVertex_RAW(hdr.numVertex, new DataView(unpacked.data), 0);
                 offset += 4 + unpacked.size;
                 break;
             }
             case 0x43584554: { // TEXC
-                const map = await readMap_MG1(hdr.numVertex, view, 4);
+                const map = readMap_MG1(hdr.numVertex, view, 4);
                 uvMap.push(map)
                 offset += 4 + map.blockSize;
                 break;
             }
             case 0x52545441: { // ATTR
-                const attrs = await readAttr_MG1(hdr.numVertex, view, 4);
+                const attrs = readAttr_MG1(hdr.numVertex, view, 4);
                 attrList.push(attrs);
                 offset += 4 + attrs.blockSize;
                 break;
@@ -331,7 +300,7 @@ function readIndex_MG1(numTriangle:number, data:DataView) : Uint32Array {
     return result;
 }
 
-async function readMap_MG1(numVertex:number, data:DataView, off:number) : Promise<{blockSize:number,mapName:string,mapRef:string,data:Float32Array}> {
+function readMap_MG1(numVertex:number, data:DataView, off:number) : {blockSize:number,mapName:string,mapRef:string,data:Float32Array} {
     off += data.byteOffset;
     const mapName = readString(data.buffer, off);
     off += mapName.len;
@@ -339,7 +308,7 @@ async function readMap_MG1(numVertex:number, data:DataView, off:number) : Promis
     off += mapRef.len - data.byteOffset;
 
     const unpackedSize = 2 * numVertex;
-    const unpacked = await unpack(data, off, unpackedSize);
+    const unpacked = unpack(data, off, unpackedSize);
 
     const result = new Float32Array(numVertex*2);
     const unpackedView = new DataView(unpacked.data);
@@ -355,13 +324,13 @@ async function readMap_MG1(numVertex:number, data:DataView, off:number) : Promis
     };
 }
 
-async function readAttr_MG1(numVertex:number, data:DataView, off:number) : Promise<{blockSize:number,attrName:string,data:Float32Array}> {
+function readAttr_MG1(numVertex:number, data:DataView, off:number) : {blockSize:number,attrName:string,data:Float32Array} {
     off += data.byteOffset;
     const attrName = readString(data.buffer, off);
     off += attrName.len - data.byteOffset;
 
     const unpackedSize = 4 * numVertex;
-    const unpacked = await unpack(data, off, unpackedSize);
+    const unpacked = unpack(data, off, unpackedSize);
 
     const result = new Float32Array(numVertex*4);
     const unpackedView = new DataView(unpacked.data);
@@ -419,7 +388,7 @@ function extractMg2Header(data:DataView, off:number) : MG2Header {
     };
 }
 
-async function parseCTM_MG2(hdr:CTMHeader, offset:number, file:ArrayBuffer) : Promise<CTMData> {
+function parseCTM_MG2(hdr:CTMHeader, offset:number, file:ArrayBuffer) : CTMData {
     const len = file.byteLength;
     let mg2Hdr : null|MG2Header = null;
     let gridIndices : null|Uint32Array = null;
@@ -443,40 +412,40 @@ async function parseCTM_MG2(hdr:CTMHeader, offset:number, file:ArrayBuffer) : Pr
             }
             case 0x54524556: { // VERT
                 unpackedSize = 3 * hdr.numVertex;
-                unpacked = await unpack(view, 4, unpackedSize);
+                unpacked = unpack(view, 4, unpackedSize);
                 vertices = readVertex_MG2(mg2Hdr!.vertexPrec, hdr.numVertex, new DataView(unpacked.data));
                 offset += 4 + unpacked.size;
                 break;
             }
             case 0x58444947: { // GIDX
                 unpackedSize = 1 * hdr.numVertex;
-                unpacked = await unpack(view, 4, unpackedSize);
+                unpacked = unpack(view, 4, unpackedSize);
                 gridIndices = readGridIndex_MG2(hdr.numVertex, new DataView(unpacked.data));
                 offset += 4 + unpacked.size;
                 break;
             }
             case 0x58444e49: { // INDX
                 unpackedSize = 3 * hdr.numTriangle;
-                unpacked = await unpack(view, 4, unpackedSize);
+                unpacked = unpack(view, 4, unpackedSize);
                 indices = readIndex_MG1(hdr.numTriangle, new DataView(unpacked.data));
                 offset += 4 + unpacked.size;
                 break;
             }
             case 0x4d524f4e: { // NORM
                 unpackedSize = 3 * hdr.numVertex;
-                unpacked = await unpack(view, 4, unpackedSize);
+                unpacked = unpack(view, 4, unpackedSize);
                 intNormals = readIndex_MG1(hdr.numVertex, new DataView(unpacked.data));
                 offset += 4 + unpacked.size;
                 break;
             }
             case 0x43584554: { // TEXC
-                const map = await readMap_MG2(hdr.numVertex, view, 4);
+                const map = readMap_MG2(hdr.numVertex, view, 4);
                 uvMap.push(map)
                 offset += 4 + map.blockSize;
                 break;
             }
             case 0x52545441: { // ATTR
-                const attrs = await readAttr_MG2(hdr.numVertex, view, 4);
+                const attrs = readAttr_MG2(hdr.numVertex, view, 4);
                 attrList.push(attrs);
                 offset += 4 + attrs.blockSize;
                 break;
@@ -663,7 +632,7 @@ function postProcessNormals(normPrec:number, indices:Uint32Array, vertices:Float
     return normals;
 }
 
-async function readMap_MG2(numVertex:number, data:DataView, off:number) : Promise<{blockSize:number,mapName:string,mapRef:string,data:Float32Array}> {
+function readMap_MG2(numVertex:number, data:DataView, off:number) : {blockSize:number,mapName:string,mapRef:string,data:Float32Array} {
     off += data.byteOffset;
     const mapName = readString(data.buffer, off);
     off += mapName.len;
@@ -673,7 +642,7 @@ async function readMap_MG2(numVertex:number, data:DataView, off:number) : Promis
     off += 4;
 
     const unpackedSize = 2 * numVertex;
-    const unpacked = await unpack(data, off, unpackedSize);
+    const unpacked = unpack(data, off, unpackedSize);
 
     const result = new Float32Array(numVertex*2);
     const unpackedView = new DataView(unpacked.data);
@@ -700,7 +669,7 @@ async function readMap_MG2(numVertex:number, data:DataView, off:number) : Promis
     };
 }
 
-async function readAttr_MG2(numVertex:number, data:DataView, off:number) : Promise<{blockSize:number,attrName:string,data:Float32Array}> {
+function readAttr_MG2(numVertex:number, data:DataView, off:number) : {blockSize:number,attrName:string,data:Float32Array} {
     off += data.byteOffset;
     const attrName = readString(data.buffer, off);
     off += attrName.len - data.byteOffset;
@@ -708,7 +677,7 @@ async function readAttr_MG2(numVertex:number, data:DataView, off:number) : Promi
     off += 4 - data.byteOffset;
 
     const unpackedSize = 4 * numVertex;
-    const unpacked = await unpack(data, off, unpackedSize);
+    const unpacked = unpack(data, off, unpackedSize);
 
     const result = new Float32Array(numVertex*4);
     const unpackedView = new DataView(unpacked.data);

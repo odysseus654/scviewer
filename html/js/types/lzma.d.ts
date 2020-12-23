@@ -1,41 +1,3 @@
-/*
-export interface LZMA {
-    compress(
-        str: string | ArrayLike<number>,
-        mode: number,
-        // The "result" is normal array of numbers - signed byte (from -127 to 128). You can convert with "new Int8Array(result)"
-        onFinish: (result: number[] | null, error: Error) => void,
-        onProgress?: (progress: number) => void,
-    ): void;
-  
-    decompress(
-        byteArray: ArrayLike<number>,
-        onFinish: (result: string | number[] | null, error?: Error) => void,
-        onProgress?: (progress: number) => void,
-    ): void;
-
-    worker() : null|Worker;
-}
-export interface LZMA2 extends LZMA {
-    lzma2_compress(
-        str: string | ArrayLike<number>,
-        mode: number,
-        // The "result" is normal array of numbers - signed byte (from -127 to 128). You can convert with "new Int8Array(result)"
-        onFinish: (result: number[] | null, error: Error) => void,
-        onProgress?: (progress: number) => void,
-    ): void;
-  
-    lzma2_decompress(
-        byteArray: ArrayLike<number>,
-        onFinish: (result: string | number[] | null, error?: Error) => void,
-        onProgress?: (progress: number) => void,
-    ): void;
-}
-
-export function LZMA(workerPath?:string) : LZMA;
-export function LZMA2(workerPath?:string) : LZMA2;
-*/
-
 export interface InputStream {
     readByte() : number;
     size : number;
@@ -44,7 +6,7 @@ export interface OutputStream {
     writeByte(b:number) : void;
 }
 
-interface OutWindow {
+export interface OutWindow {
     create(windowSize:number) : void;
     flush() : void;
     releaseStream() : void;
@@ -57,9 +19,9 @@ interface OutWindow {
 interface OutWindowConstructor {
     new() : OutWindow;
 }
-declare var OutWindow : OutWindowConstructor;
+export declare var OutWindow : OutWindowConstructor;
 
-interface RangeDecoder {
+export interface RangeDecoder {
     setStream(stream:InputStream) : void;
     releaseStream() : void;
     init() : void;
@@ -69,11 +31,11 @@ interface RangeDecoder {
 interface RangeDecoderConstructor {
     new() : RangeDecoder;
 }
-declare var RangeDecoder : RangeDecoderConstructor;
+export declare var RangeDecoder : RangeDecoderConstructor;
 
-//function initBitModels(probs:number[], len:number) : void;
+export function initBitModels(probs:number[], len:number) : void;
 
-interface BitTreeDecoder {
+export interface BitTreeDecoder {
     init() : void;
     decode(rangeDecoder:RangeDecoder) : number;
     reverseDecode(rangeDecoder:RangeDecoder) : number;
@@ -82,9 +44,9 @@ interface BitTreeDecoder {
 interface BitTreeDecoderConstructor {
     new(numBitLevels:number) : BitTreeDecoder;
 }
-declare var BitTreeDecoder : BitTreeDecoderConstructor;
+export declare var BitTreeDecoder : BitTreeDecoderConstructor;
 
-interface LenDecoder {
+export interface LenDecoder {
     create(numPosStates:number) : void;
     init() : void;
     decode(rangeDecoder:RangeDecoder, posState:number) : number;
@@ -92,9 +54,9 @@ interface LenDecoder {
 interface LenDecoderConstructor {
     new() : LenDecoder;
 }
-declare var LenDecoder : LenDecoderConstructor;
+export declare var LenDecoder : LenDecoderConstructor;
 
-interface Decoder2 {
+export interface Decoder2 {
     init() : void;
     decodeNormal(rangeDecoder:RangeDecoder) : number;
     decodeWithMatchByte(rangeDecoder:RangeDecoder, matchByte:number) : number;
@@ -102,9 +64,9 @@ interface Decoder2 {
 interface Decoder2Constructor {
     new() : Decoder2;
 }
-declare var Decoder2 : Decoder2Constructor;
+export declare var Decoder2 : Decoder2Constructor;
 
-interface LiteralDecoder {
+export interface LiteralDecoder {
     create(numPosBits:number, numPrevBits:number) : void;
     init() : void;
     getDecoder(pos:number, prevByte:number) : Decoder2;
@@ -112,19 +74,22 @@ interface LiteralDecoder {
 interface LiteralDecoderConstructor {
     new() : LiteralDecoder;
 }
-declare var LiteralDecoder : LiteralDecoderConstructor;
+export declare var LiteralDecoder : LiteralDecoderConstructor;
 
-interface Decoder {
+export interface Decoder {
     setDictionarySize(dictionarySize:number) : boolean;
     setLcLpPb(lc:number, lp:number, pb:number) : boolean;
+    setProperties(props:{lc:number,lp:number,pb:number,dictionarySize:number}) : void;
+    decodeHeader(inStream:InputStream) : {lc:number,lp:number,pb:number,dictionarySize:number,uncompressedSize:number};
     init() : void;
-    decode(inStream:InputStream, outStream:OutputStream, outSize:number) : boolean;
+    decodeBody(inStream:InputStream, outStream:InputStream, maxSize:InputStream) : boolean;
     setDecoderProperties(properties:InputStream) : boolean;
 }
 interface DecoderConstructor {
     new() : Decoder;
 }
-declare var Decoder : DecoderConstructor;
+export declare var Decoder : DecoderConstructor;
 
-export function decompress(properties:InputStream, inStream:InputStream, outStream:OutputStream, outSize:number) : true;
-export function decompressFile(inStream:InputStream, outStream:OutputStream) : true;
+export function decompress(properties:InputStream, inStream:InputStream, outStream:OutputStream, outSize:number) : OutputStream;
+export function decompressFile(inStream:InputStream|ArrayBuffer, outStream?:OutputStream) : OutputStream;
+export function decode(inStream:InputStream|ArrayBuffer, outStream?:OutputStream) : OutputStream; // alias of decompressFile

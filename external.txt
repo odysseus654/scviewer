@@ -1,8 +1,8 @@
 event-emitter.ts - EventEmitter polyfill by undecidedapollo <https://gist.github.com/mudge/5830382>
     License unknown (general gist license?)
 
-LZMA-JS (2.3.0) - Javascript Implementation of LZMA <https://github.com/LZMA-JS/LZMA-JS>
-    MIT License <https://github.com/LZMA-JS/LZMA-JS/blob/master/LICENSE>
+JS-LZMA (3060ba8) - Javascript Implementation of LZMA <https://github.com/jcmellado/js-lzma>
+    MIT license <https://github.com/jcmellado/js-lzma/blob/master/LICENSE.txt>
 
 material-design-icons-iconfont (v6.1.0) - Icon set <https://github.com/jossef/material-design-icons-iconfont>
     Apache2 license <https://github.com/jossef/material-design-icons-iconfont/blob/master/LICENSE>

@@ -8,10 +8,8 @@ export function init() {
     const lib = new FileLibrary();
     lib.fetch('aegis/Gladius')
         .then((value:ArrayBuffer) => {
-            return parseCTM(value);
-        })
-        .then((value:CTMData) => {
+            const data = parseCTM(value);
             debugger;
-            alert(value);
-        });
+            alert(data);
+        })
 }
