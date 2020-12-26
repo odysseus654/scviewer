@@ -52,9 +52,13 @@ function extractCtmHeader(file : ArrayBuffer) : CTMHeader {
     };
 }
 
+function assert(test:boolean) {
+    if(!test) throw new Error('file corrupted');
+}
+
 function readString(file:ArrayBuffer, off:number) : {val:string,len:number} {
     const view = new DataView(file, off);
-    const strlen = view.getUint32(0, true);
+    const strlen = view.getUint32(0, true); assert(strlen+off+4 < file.byteLength);
     off += 4;
     let val = '';
     if(strlen > 0) {
@@ -94,7 +98,7 @@ function parseCTM_Raw(hdr:CTMHeader, offset:number, file:ArrayBuffer) : CTMData 
         const ident = view.getUint32(0, true);
         switch(ident) {
             case 0x58444e49: { // INDX
-                indices = readIndex_RAW(hdr.numTriangle, view, 4);
+                indices = readIndex_RAW(hdr.numTriangle, hdr.numVertex, view, 4);
                 offset += 4 + 4*(hdr.numTriangle*3+1);
                 break;
             }
@@ -134,10 +138,10 @@ function parseCTM_Raw(hdr:CTMHeader, offset:number, file:ArrayBuffer) : CTMData 
     };
 }
 
-function readIndex_RAW(numTriangle:number, data:DataView, off:number) : Uint32Array {
+function readIndex_RAW(numTriangle:number, numVertex:number, data:DataView, off:number) : Uint32Array {
     const result = new Uint32Array(numTriangle*3);
     for(let idx=0; idx < numTriangle*3; idx++) {
-        result[idx] = data.getUint32(idx*4+off, true);
+        result[idx] = data.getUint32(idx*4+off, true); assert(result[idx] < numVertex);
     }
     return result;
 }
@@ -145,7 +149,7 @@ function readIndex_RAW(numTriangle:number, data:DataView, off:number) : Uint32Ar
 function readVertex_RAW(numVertex:number, data:DataView, off:number) : Float32Array {
     const result = new Float32Array(numVertex*3);
     for(let idx=0; idx < numVertex*3; idx++) {
-        result[idx] = data.getFloat32(idx*4+off, true);
+        result[idx] = data.getFloat32(idx*4+off, true); assert(!isNaN(result[idx]));
     }
     return result;
 }
@@ -160,7 +164,7 @@ function readMap_RAW(numVertex:number, data:DataView, off:number) : {blockSize:n
     const result = new Float32Array(numVertex*2);
     off -= data.byteOffset;
     for(let idx=0; idx < numVertex*2; idx++) {
-        result[idx] = data.getFloat32(idx*4+off, true);
+        result[idx] = data.getFloat32(idx*4+off, true); assert(!isNaN(result[idx]));
     }
     return {
         blockSize: off + 8*numVertex,
@@ -178,7 +182,7 @@ function readAttr_RAW(numVertex:number, data:DataView, off:number) : {blockSize:
     const result = new Float32Array(numVertex*4);
     off -= data.byteOffset;
     for(let idx=0; idx < numVertex*4; idx++) {
-        result[idx] = data.getFloat32(idx*4+off, true);
+        result[idx] = data.getFloat32(idx*4+off, true); assert(!isNaN(result[idx]));
     }
     return {
         blockSize: off + 16*numVertex,
@@ -187,16 +191,12 @@ function readAttr_RAW(numVertex:number, data:DataView, off:number) : {blockSize:
     };
 }
 
-function unpack(data:DataView,off:number,outSize:number) : {size:number, data:ArrayBuffer} {
-    const inputLen = data.getUint32(off, true);
+function unpack(data:DataView,off:number,numEntry:number,numElem:number) : {size:number, data:ArrayBuffer} {
+    const inputLen = data.getUint32(off, true); assert(inputLen+4 < data.byteLength);
     off += 4 + data.byteOffset;
     const input = new Uint8Array(data.buffer.slice(off, off+inputLen));
 
     let inputOffset = 0;
-    let outputOffset = 0;
-    let outputBuffer : ArrayBuffer = new ArrayBuffer(outSize*4);
-    let outputView = new Uint8Array(outputBuffer);
-
     const inputStream = {
         readByte() : number {
             return input[inputOffset++];
@@ -204,15 +204,34 @@ function unpack(data:DataView,off:number,outSize:number) : {size:number, data:Ar
         size : inputLen,
     };
 
+    const outputBufferSize = numEntry*numElem*4;
+    let tempBuffer : ArrayBuffer = new ArrayBuffer(outputBufferSize);
+    let tempView = new Uint8Array(tempBuffer);
+
+    let outputOffset = 0;
     const outputStream = {
         writeByte(val:number) : void {
-            const outOff = (outputOffset++) * 4;
-            outputView[(outOff%outSize) + ((outOff/outSize)|0)] = val;
+            tempView[outputOffset++] = val;
         }
     }
 
-    decompress(inputStream, inputStream, outputStream, outSize*4);
+    decompress(inputStream, inputStream, outputStream, outputBufferSize);
 
+    // de-interlace the data
+    let outputBuffer : ArrayBuffer = new ArrayBuffer(outputBufferSize);
+    let outputView = new Uint32Array(outputBuffer);
+
+    // copied from the C++ (since I can't really figure this out otherwise)
+    for(let i = 0; i < numEntry; i++) {
+        for(let k = 0; k < numElem; k++) {
+            const value = tempView[i + k * numEntry + 3 * numEntry * numElem] |
+                (tempView[i + k * numEntry + 2 * numEntry * numElem] << 8) |
+                (tempView[i + k * numEntry + numEntry * numElem] << 16) |
+                (tempView[i + k * numEntry] << 24);
+            outputView[i * numElem + k] = value;
+        }
+    }
+  
     return {size:inputLen+4+5,data:outputBuffer};
 }
 
@@ -224,30 +243,26 @@ function parseCTM_MG1(hdr:CTMHeader, offset:number, file:ArrayBuffer) : CTMData 
     const uvMap : {mapName:string,mapRef:string,data:Float32Array}[] = [];
     const attrList : {blockSize:number,attrName:string,data:Float32Array}[] = [];
     let unpacked : {size:number, data:ArrayBuffer};
-    let unpackedSize : number = 0;
 
     while(offset < len) {
         const view = new DataView(file, offset);
         const ident = view.getUint32(0, true);
         switch(ident) {
             case 0x58444e49: { // INDX
-                unpackedSize = 3 * hdr.numTriangle;
-                unpacked = unpack(view, 4, unpackedSize);
-                indices = readIndex_MG1(hdr.numTriangle, new DataView(unpacked.data));
+                unpacked = unpack(view, 4, hdr.numTriangle, 3);
+                indices = readIndex_MG1(hdr.numTriangle, hdr.numVertex, unpacked.data);
                 offset += 4 + unpacked.size;
                 break;
             }
             case 0x54524556: { // VERT
-                unpackedSize = 3 * hdr.numVertex;
-                unpacked = unpack(view, 4, unpackedSize);
-                vertices = readVertex_RAW(hdr.numVertex, new DataView(unpacked.data), 0);
+                unpacked = unpack(view, 4, hdr.numVertex, 3);
+                vertices = new Float32Array(unpacked.data);
                 offset += 4 + unpacked.size;
                 break;
             }
             case 0x4d524f4e: { // NORM
-                unpackedSize = 3 * hdr.numVertex;
-                unpacked = unpack(view, 4, unpackedSize);
-                normals = readVertex_RAW(hdr.numVertex, new DataView(unpacked.data), 0);
+                unpacked = unpack(view, 4, hdr.numVertex, 3);
+                normals = new Float32Array(hdr.numVertex);
                 offset += 4 + unpacked.size;
                 break;
             }
@@ -277,24 +292,18 @@ function parseCTM_MG1(hdr:CTMHeader, offset:number, file:ArrayBuffer) : CTMData 
     };
 }
 
-function readIndex_MG1(numTriangle:number, data:DataView) : Uint32Array {
+function readIndex_MG1(numTriangle:number, numVertex:number, arr:ArrayBuffer) : Uint32Array {
+    const data = new Uint32Array(arr);
     const result = new Uint32Array(numTriangle*3);
 
-    // first vertex
-    let thisVal = 0;
+    let firstVal = 0;
     for(let idx=0; idx < numTriangle; idx++) {
-        thisVal = result[idx*3] = data.getUint32(idx*4, true) + thisVal;
-    }
+        result[idx*3] = firstVal = data[idx*3] + firstVal; assert(firstVal < numVertex);
+        result[idx*3+2] = data[idx*3+1] + firstVal; assert(result[idx*3+2] < numVertex);
 
-    // second index
-    thisVal = result[0];
-    for(let idx=0; idx < numTriangle; idx++) {
-        thisVal = result[idx*3+1] = data.getUint32((numTriangle+idx)*4, true) + thisVal;
-    }
-
-    // third index
-    for(let idx=0; idx < numTriangle; idx++) {
-        result[idx*3+2] = data.getUint32((numTriangle*2+idx)*4, true) + result[idx*3];
+        result[idx*3+1] = data[idx*3+1] +
+            ((idx && (firstVal == result[(idx - 1) * 3])) ? result[(idx - 1) * 3 + 1] : firstVal);
+        assert(result[idx*3+1] < numVertex);
     }
 
     return result;
@@ -307,13 +316,12 @@ function readMap_MG1(numVertex:number, data:DataView, off:number) : {blockSize:n
     const mapRef = readString(data.buffer, off);
     off += mapRef.len - data.byteOffset;
 
-    const unpackedSize = 2 * numVertex;
-    const unpacked = unpack(data, off, unpackedSize);
+    const unpacked = unpack(data, off, numVertex, 2);
 
     const result = new Float32Array(numVertex*2);
     const unpackedView = new DataView(unpacked.data);
     for(let idx=0; idx < numVertex*2; idx++) {
-        result[idx] = unpackedView.getFloat32(idx*4, true);
+        result[idx] = unpackedView.getFloat32(idx*4, true); assert(!isNaN(result[idx]));
     }
 
     return {
@@ -329,14 +337,13 @@ function readAttr_MG1(numVertex:number, data:DataView, off:number) : {blockSize:
     const attrName = readString(data.buffer, off);
     off += attrName.len - data.byteOffset;
 
-    const unpackedSize = 4 * numVertex;
-    const unpacked = unpack(data, off, unpackedSize);
+    const unpacked = unpack(data, off, numVertex, 4);
 
     const result = new Float32Array(numVertex*4);
     const unpackedView = new DataView(unpacked.data);
     off -= data.byteOffset;
     for(let idx=0; idx < numVertex*4; idx++) {
-        result[idx] = unpackedView.getFloat32(idx*4, true);
+        result[idx] = unpackedView.getFloat32(idx*4, true); assert(!isNaN(result[idx]));
     }
 
     return {
@@ -361,17 +368,17 @@ interface MG2Header {
 }
 
 function extractMg2Header(data:DataView, off:number) : MG2Header {
-    const vertexPrec = data.getFloat32(off, true);
-    const normPrec = data.getFloat32(off+4, true);
-    const LBx = data.getFloat32(off+8, true);
-    const LBy = data.getFloat32(off+12, true);
-    const LBz = data.getFloat32(off+16, true);
-    const HBx = data.getFloat32(off+20, true);
-    const HBy = data.getFloat32(off+24, true);
-    const HBz = data.getFloat32(off+28, true);
-    const divX = data.getUint32(off+32, true);
-    const divY = data.getUint32(off+36, true);
-    const divZ = data.getUint32(off+40, true);
+    const vertexPrec = data.getFloat32(off, true); assert(!isNaN(vertexPrec) && vertexPrec >= 0);
+    const normPrec = data.getFloat32(off+4, true); assert(!isNaN(normPrec) && normPrec >= 0);
+    const LBx = data.getFloat32(off+8, true); assert(!isNaN(LBx));
+    const LBy = data.getFloat32(off+12, true); assert(!isNaN(LBy));
+    const LBz = data.getFloat32(off+16, true); assert(!isNaN(LBz));
+    const HBx = data.getFloat32(off+20, true); assert(!isNaN(HBx) && HBx > LBx);
+    const HBy = data.getFloat32(off+24, true); assert(!isNaN(HBy) && HBy > LBy);
+    const HBz = data.getFloat32(off+28, true); assert(!isNaN(HBz) && HBz > LBz);
+    const divX = data.getUint32(off+32, true); assert(divX > 1);
+    const divY = data.getUint32(off+36, true); assert(divY > 1);
+    const divZ = data.getUint32(off+40, true); assert(divZ > 1);
 
     return {
         vertexPrec: vertexPrec,
@@ -393,13 +400,12 @@ function parseCTM_MG2(hdr:CTMHeader, offset:number, file:ArrayBuffer) : CTMData 
     let mg2Hdr : null|MG2Header = null;
     let gridIndices : null|Uint32Array = null;
     let indices : null|Uint32Array = null;
-    let vertices : null|Float32Array = null;
+    let intVertices : null|Uint32Array = null;
     let intNormals : null|Uint32Array = null;
     let normals : null|Float32Array = null;
     const uvMap : {mapName:string,mapRef:string,data:Float32Array}[] = [];
     const attrList : {blockSize:number,attrName:string,data:Float32Array}[] = [];
     let unpacked : {size:number, data:ArrayBuffer};
-    let unpackedSize : number = 0;
 
     while(offset < len) {
         const view = new DataView(file, offset);
@@ -411,30 +417,26 @@ function parseCTM_MG2(hdr:CTMHeader, offset:number, file:ArrayBuffer) : CTMData 
                 break;
             }
             case 0x54524556: { // VERT
-                unpackedSize = 3 * hdr.numVertex;
-                unpacked = unpack(view, 4, unpackedSize);
-                vertices = readVertex_MG2(mg2Hdr!.vertexPrec, hdr.numVertex, new DataView(unpacked.data));
+                unpacked = unpack(view, 4, hdr.numVertex, 3);
+                intVertices = new Uint32Array(unpacked.data);
                 offset += 4 + unpacked.size;
                 break;
             }
             case 0x58444947: { // GIDX
-                unpackedSize = 1 * hdr.numVertex;
-                unpacked = unpack(view, 4, unpackedSize);
-                gridIndices = readGridIndex_MG2(hdr.numVertex, new DataView(unpacked.data));
+                unpacked = unpack(view, 4, hdr.numVertex, 1);
+                gridIndices = readGridIndex_MG2(hdr.numVertex, unpacked.data);
                 offset += 4 + unpacked.size;
                 break;
             }
             case 0x58444e49: { // INDX
-                unpackedSize = 3 * hdr.numTriangle;
-                unpacked = unpack(view, 4, unpackedSize);
-                indices = readIndex_MG1(hdr.numTriangle, new DataView(unpacked.data));
+                unpacked = unpack(view, 4, hdr.numTriangle, 3);
+                indices = readIndex_MG1(hdr.numTriangle, hdr.numVertex, unpacked.data);
                 offset += 4 + unpacked.size;
                 break;
             }
             case 0x4d524f4e: { // NORM
-                unpackedSize = 3 * hdr.numVertex;
-                unpacked = unpack(view, 4, unpackedSize);
-                intNormals = readIndex_MG1(hdr.numVertex, new DataView(unpacked.data));
+                unpacked = unpack(view, 4, hdr.numVertex, 3);
+                intNormals = new Uint32Array(unpacked.data);
                 offset += 4 + unpacked.size;
                 break;
             }
@@ -455,8 +457,8 @@ function parseCTM_MG2(hdr:CTMHeader, offset:number, file:ArrayBuffer) : CTMData 
         }
     }
 
-    postProcessVertex_MG2(mg2Hdr!, vertices!, gridIndices!);
-    if(intNormals) normals = postProcessNormals(mg2Hdr!.normPrec, indices!, vertices!, intNormals);
+    const vertices = postProcessVertex_MG2(mg2Hdr!, intVertices!, gridIndices!);
+    if(intNormals) normals = postProcessNormals(mg2Hdr!.normPrec, indices!, vertices, intNormals);
 
     return {
         indices : indices!,
@@ -467,57 +469,52 @@ function parseCTM_MG2(hdr:CTMHeader, offset:number, file:ArrayBuffer) : CTMData 
     };
 }
 
-function readVertex_MG2(vertexPrec:number, numVertex:number, data:DataView) : Float32Array {
-    const result = new Float32Array(numVertex*3);
-
-    // first vertex
-    let thisVal = 0;
-    for(let idx=0; idx < numVertex; idx++) {
-        thisVal = data.getUint32(idx*4, true) + thisVal;
-        result[idx*3] = vertexPrec * thisVal;
-    }
-
-    // second index
-    for(let idx=0; idx < numVertex; idx++) {
-        result[idx*3+1] = vertexPrec * data.getUint32((numVertex+idx)*4, true);
-    }
-
-    // third index
-    for(let idx=0; idx < numVertex; idx++) {
-        result[idx*3+2] = vertexPrec * data.getUint32((numVertex*2+idx)*4, true);
-    }
-
-    return result;
-}
-
-function postProcessVertex_MG2(hdr:MG2Header, vertices:Float32Array, gridIndices:Uint32Array) : void {
-    const numVertices = vertices.length / 3;
-    const divX = (hdr.HBx - hdr.LBx) / hdr.divX;
-    const divY = (hdr.HBy - hdr.LBy) / hdr.divY;
-    const divZ = (hdr.HBz - hdr.LBz) / hdr.divZ;
-
-    for(let idx=0; idx < numVertices; idx++) {
-        let gridIndex = gridIndices[idx];
-        let temp1 = (gridIndex / hdr.divX)|0;
-        const gx = gridIndex - (temp1 * hdr.divX);
-        const gz = (temp1  / hdr.divY)|0;
-        const gy = temp1 - (gz * hdr.divX);
-
-        vertices[idx*3] += hdr.LBx + divX * gx;
-        vertices[idx*3+1] += hdr.LBy + divY * gy;
-        vertices[idx*3+2] += hdr.LBz + divZ * gz;
-    }
-}
-
-function readGridIndex_MG2(numVertex:number, data:DataView) : Uint32Array {
+function readGridIndex_MG2(numVertex:number, arr:ArrayBuffer) : Uint32Array {
+    const data = new Uint32Array(arr);
     const result = new Uint32Array(numVertex);
 
     let thisVal = 0;
     for(let idx=0; idx < numVertex; idx++) {
-        thisVal = result[idx] = data.getUint32(idx*4, true) + thisVal;
+        thisVal = result[idx] = data[idx] + thisVal;
     }
 
     return result;
+}
+
+function postProcessVertex_MG2(hdr:MG2Header, intVertices:Uint32Array, gridIndices:Uint32Array) : Float32Array {
+    const vertices = new Float32Array(intVertices.length);
+    const numVertices = vertices.length / 3;
+
+    const divX = (hdr.HBx - hdr.LBx) / hdr.divX;
+    const divY = (hdr.HBy - hdr.LBy) / hdr.divY;
+    const divZ = (hdr.HBz - hdr.LBz) / hdr.divZ;
+    const vertexPrec = hdr.vertexPrec;
+
+    let prevGridIndex = -1;
+    let prevDeltaX = 0;
+    for(let idx=0; idx < numVertices; idx++) {
+        const gridIndex = gridIndices[idx];
+
+        const gx = gridIndex % hdr.divX;
+        const temp1 = (gridIndex / hdr.divX)|0;
+        const gy = temp1 % hdr.divY;
+        const gz = (temp1 / hdr.divY)|0;
+
+        let deltaX = intVertices[idx*3];
+        if(gridIndex == prevGridIndex) deltaX += prevDeltaX;
+  
+        vertices[idx*3] = hdr.LBx + vertexPrec * deltaX + divX * gx;
+        vertices[idx*3+1] = hdr.LBy + vertexPrec * intVertices[idx*3+1] + divY * gy;
+        vertices[idx*3+2] = hdr.LBz + vertexPrec * intVertices[idx*3+2] + divZ * gz;
+
+        vertices[idx*3] += hdr.LBx + divX * gx;
+        vertices[idx*3+1] += hdr.LBy + divY * gy;
+        vertices[idx*3+2] += hdr.LBz + divZ * gz;
+
+        prevGridIndex = gridIndex;
+        prevDeltaX = deltaX;
+    }
+    return vertices;
 }
 
 function toSigned(val:number) : number {
@@ -638,27 +635,24 @@ function readMap_MG2(numVertex:number, data:DataView, off:number) : {blockSize:n
     off += mapName.len;
     const mapRef = readString(data.buffer, off);
     off += mapRef.len - data.byteOffset;
-    const uvPrec = data.getFloat32(off, true);
+    const uvPrec = data.getFloat32(off, true); assert(!isNaN(uvPrec));
     off += 4;
 
-    const unpackedSize = 2 * numVertex;
-    const unpacked = unpack(data, off, unpackedSize);
+    const unpacked = unpack(data, off, numVertex, 2);
 
     const result = new Float32Array(numVertex*2);
-    const unpackedView = new DataView(unpacked.data);
+    const unpackedView = new Uint32Array(unpacked.data);
 
-    // first index
-    let thisVal = 0;
-    for(let idx=0; idx < numVertex; idx++) {
-        thisVal = uvPrec * (toSigned(unpackedView.getUint32(idx*4, true)) + thisVal);
-        result[idx*2] = uvPrec * thisVal;
-    }
+    let thisU = 0;
+    let thisV = 0;
+    for(let idx = 0; idx < numVertex; idx++) {
+        // Calculate inverse delta
+        thisU = toSigned(unpackedView[idx*2]) + thisU;
+        thisV = toSigned(unpackedView[idx*2+1]) + thisV;
 
-    // second index
-    thisVal = 0;
-    for(let idx=0; idx < numVertex; idx++) {
-        thisVal = uvPrec * (toSigned(unpackedView.getUint32((numVertex+idx)*4, true)) + thisVal);
-        result[idx*2+1] = uvPrec * thisVal;
+        // Convert to floating point
+        result[idx*2] = thisU * uvPrec;
+        result[idx*2+1] = thisV * uvPrec;
     }
     
     return {
@@ -673,41 +667,32 @@ function readAttr_MG2(numVertex:number, data:DataView, off:number) : {blockSize:
     off += data.byteOffset;
     const attrName = readString(data.buffer, off);
     off += attrName.len - data.byteOffset;
-    const attrPrec = data.getFloat32(off, true);
+    const attrPrec = data.getFloat32(off, true); assert(!isNaN(attrPrec));
     off += 4 - data.byteOffset;
 
-    const unpackedSize = 4 * numVertex;
-    const unpacked = unpack(data, off, unpackedSize);
+    const unpacked = unpack(data, off, numVertex, 4);
 
     const result = new Float32Array(numVertex*4);
-    const unpackedView = new DataView(unpacked.data);
+    const unpackedView = new Uint32Array(unpacked.data);
 
-    // first index
-    let thisVal = 0;
-    for(let idx=0; idx < numVertex; idx++) {
-        thisVal = attrPrec * (toSigned(unpackedView.getUint32(idx*4, true)) + thisVal);
-        result[idx*4] = attrPrec * thisVal;
-    }
+    let valueA = 0;
+    let valueB = 0;
+    let valueC = 0;
+    let valueD = 0;
 
-    // second index
-    thisVal = 0;
-    for(let idx=0; idx < numVertex; idx++) {
-        thisVal = attrPrec * (toSigned(unpackedView.getUint32((numVertex+idx)*4, true)) + thisVal);
-        result[idx*4+1] = attrPrec * thisVal;
-    }
-    
-    // third index
-    thisVal = 0;
-    for(let idx=0; idx < numVertex; idx++) {
-        thisVal = attrPrec * (toSigned(unpackedView.getUint32((numVertex*2+idx)*4, true)) + thisVal);
-        result[idx*4+2] = attrPrec * thisVal;
-    }
-    
-    // fourth index
-    thisVal = 0;
-    for(let idx=0; idx < numVertex; idx++) {
-        thisVal = attrPrec * (toSigned(unpackedView.getUint32((numVertex*3+idx)*4, true)) + thisVal);
-        result[idx*4+3] = attrPrec * thisVal;
+    for(let idx = 0; idx < numVertex; idx++) {
+        // Calculate inverse delta, and convert to floating point
+        valueA = unpackedView[idx*4] + valueA;
+        result[idx*4] = valueA * attrPrec;
+
+        valueB = unpackedView[idx*4+1] + valueB;
+        result[idx*4+1] = valueB * attrPrec;
+
+        valueC = unpackedView[idx*4+2] + valueC;
+        result[idx*4+2] = valueC * attrPrec;
+
+        valueD = unpackedView[idx*4+3] + valueD;
+        result[idx*4+3] = valueD * attrPrec;
     }
     
     return {
